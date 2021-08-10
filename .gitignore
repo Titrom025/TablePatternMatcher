@@ -5,3 +5,6 @@ tables/
 .ipynb_checkpoints/patter_matcher-checkpoint.ipynb
 .DS_Store
 results.zip
+*.jpg
+*.csv
+*.tiff
