@@ -5,11 +5,13 @@ import csv
 import math
 from numpy import linalg as LA
 
+
 def get_files(dirpath, ext):
     files = [s for s in os.listdir(dirpath)
          if os.path.isfile(os.path.join(dirpath, s)) and os.path.splitext(s)[1] == ext]
     files.sort()
     return files
+
 
 def createDir(dirpath, ext):
     if os.path.exists(dirpath):
@@ -17,6 +19,7 @@ def createDir(dirpath, ext):
             os.remove(os.path.join(dirpath, file))
     else:
         os.mkdir(dirpath)
+
 
 def largestTrianglePointsIdxs(points):
     area = 0
@@ -36,10 +39,11 @@ def largestTrianglePointsIdxs(points):
 
     return pointsIdxs
 
+
 def findNearesPoints(points, keypoints):
     nearest_points = []
     for point in points:
-        minDist = MIN_DIST
+        minDist = MIN_DIST_BORDERS
         minKeypoint = None
         for keypoint in keypoints:
             if math.sqrt((point[0] - keypoint[0])**2 + (point[1] - keypoint[1])**2) < minDist:
@@ -53,15 +57,17 @@ def findNearesPoints(points, keypoints):
         
     return nearest_points
 
+
 def alignImages(table_file, regions_pattern, regions_table, 
-                original_image, rotate_matrix, border_points):
+                original_image, rotate_matrix, border_points, saveJpeg = False):
     keypoints_pattern = regions_pattern
     keypoints_table = regions_table
     
-    print(len(keypoints_pattern), len(keypoints_table))
     if len(keypoints_pattern) < 3 or len(keypoints_table) < 3:
-        print("Not enough elements")
-        cv2.imwrite(RESULTS_DIR + table_file + "_borders.jpg", original_image)
+        if PRINT_DEBUG:
+            print("Not enough elements")
+        # if saveJpeg:
+        #     cv2.imwrite(RESULTS_DIR + table_file + "_borders.jpg", original_image)
         return
 
     pts1 = []
@@ -97,10 +103,14 @@ def alignImages(table_file, regions_pattern, regions_table,
     for point in pts2.astype(int):
         cv2.circle(original_image, (int(point[0]), int(point[1])), radius=10, color=(0, 255, 0), thickness=-1)
     
-    print("Matches:", len(new_matches))
+    if PRINT_DEBUG:
+        print("Matches:", len(new_matches))
+
     if len(new_matches) < 3:
-        print("Lack of matches")
-        cv2.imwrite(RESULTS_DIR + table_file + "_borders.jpg", original_image)
+        if PRINT_DEBUG:
+            print("Lack of matches")
+        # if saveJpeg:
+        #     cv2.imwrite(RESULTS_DIR + table_file + "_borders.jpg", original_image)
         return 
 
     pointsIndexes = largestTrianglePointsIdxs(pts1)
@@ -113,7 +123,9 @@ def alignImages(table_file, regions_pattern, regions_table,
             
     fields_borders = []
     
-    if len(new_matches) > len(keypoints_table) * 0.8:
+    if len(new_matches) > len(keypoints_pattern) * PATTERN_MATCH_PERCENT:
+        if PRINT_DEBUG:
+            print("Returning bboxes coords")
         
         for point in dst_affin[0]:
             cv2.circle(original_image, (int(point[0]), int(point[1])), radius=10, color=(255, 0, 255), thickness=-1)
@@ -141,7 +153,6 @@ def alignImages(table_file, regions_pattern, regions_table,
                 pts_border_inv = np.array(pts_border_inv, np.float32)
 
                 dst_keypoints_inv = findNearesPoints(pts_border_inv, pts2)
-                print(dst_keypoints)
                 if dst_keypoints is None:
                     pts_border_np =  np.array([pts_border], np.float32)
                     dst_border = cv2.transform(pts_border_np, matrixAff).astype(int)[0]
@@ -155,11 +166,17 @@ def alignImages(table_file, regions_pattern, regions_table,
             
             fields_borders.append({'field_type': field_type, 'coords' : dst_border})
 
-    #     inv_rotate_matrix = cv2.invertAffineTransform(rotate_matrix)
-    #     dst_border = cv2.transform(dst_border, inv_rotate_matrix).astype(int)
-    
-    cv2.imwrite(RESULTS_DIR + table_file + "_borders.jpg", original_image)
-    return fields_borders
+    else:
+        if PRINT_DEBUG:
+            print("Not enough matches")
+
+    if len(fields_borders) > 0:
+        if saveJpeg:
+            cv2.imwrite(RESULTS_DIR + table_file + "_borders.jpg", original_image)
+        return fields_borders
+    else:
+        return None
+
 
 def rotateIMG(image):
     midImage = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -179,27 +196,20 @@ def rotateIMG(image):
  
     lines = cv2.HoughLines(dstImage, 1, np.pi/180, 375)
     
-    approvedCount = 0
-    
-    verticalCount = 0
-    verticalSum = 0
-    
     horizontalCount = 0
     horizontalSum = 0
     
     
     if lines is None:
-        print("No lines")
+        if PRINT_DEBUG:
+            print("No lines")
         return
     
     for i in range(len(lines)):
         for rho, theta in lines[i]:
             lineAngle = theta / np.pi * 180
-            
-            if (lineAngle > 180):
-                print(lineAngle)
                 
-            if (lineAngle < 80 or (lineAngle > 100 and lineAngle < 170)                 or (lineAngle > 190 and lineAngle < 260) or lineAngle > 280):
+            if (lineAngle < 80 or (lineAngle > 100 and lineAngle < 170) or (lineAngle > 190 and lineAngle < 260) or lineAngle > 280):
                 continue
             else:
                 horizontalCount += 1
@@ -233,7 +243,7 @@ def line_intersection(l1, l2):
     ydiff = (line1[0][1] - line1[1][1], line2[0][1] - line2[1][1])
 
     def det(a, b):
-        return a[0] * b[1] - a[1] * b[0]
+        return float(a[0]) * float(b[1]) - float(a[1]) * float(b[0])
 
     div = det(xdiff, ydiff)
     if div == 0:
@@ -250,24 +260,28 @@ def distance(point1, point2):
 
 
 def isPontOnLine(point, line):
-    return abs(distance([line[0],line[1]], point) + distance([line[2],line[3]], point)         - distance([line[0],line[1]], [line[2],line[3]])) < 3
+    return abs(distance([line[0],line[1]], point) + distance([line[2],line[3]], point) - distance([line[0],line[1]], [line[2],line[3]])) < 3
 
 
-def getKeyPoints(rotate_img, saveJpeg = False):
-    global pcount 
+def getKeyPoints(rotate_img, saveJpeg = False, pattern = False):
     midImage = cv2.cvtColor(rotate_img, cv2.COLOR_BGR2GRAY)
             
-    BLACK_LIMIT = 200
+    BLACK_LIMIT = 210
     
-    midImage[midImage < BLACK_LIMIT] = 0
-    midImage[midImage > BLACK_LIMIT] = 255
+    bw = midImage.copy()
+    bw[bw > BLACK_LIMIT] = BLACK_LIMIT
+    bw[bw < BLACK_LIMIT] = 255
+    bw[bw == BLACK_LIMIT] = 0
 
-    thresh = cv2.threshold(midImage, 170, 200, cv2.THRESH_BINARY_INV)[1]
+    bw = cv2.GaussianBlur(bw, (5,5), 0)
 
-    horizontal = np.copy(thresh)
-    vertical = np.copy(thresh)
+    bw[bw >= 128] = 255
+    bw[bw < 128] = 0
     
-    scale = 10
+    horizontal = np.copy(bw)
+    vertical = np.copy(bw)
+    
+    scale = 15
         
     horizontalCols = horizontal.shape[1]
     horizontalSize = horizontalCols / scale
@@ -283,21 +297,17 @@ def getKeyPoints(rotate_img, saveJpeg = False):
     vertical = cv2.morphologyEx(vertical, cv2.MORPH_OPEN, verticalStructure)
     
     
-    SE = cv2.getStructuringElement(cv2.MORPH_RECT, (1,5))
+    SE = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 1))
     horizontal = cv2.dilate(horizontal, SE, iterations=1)
 
-    SE = cv2.getStructuringElement(cv2.MORPH_RECT, (5,1))
+    SE = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 25))
     vertical = cv2.dilate(vertical, SE, iterations=1)
     
     lines_mask = horizontal + vertical
 
-    # cv2.imwrite(RESULTS_DIR + "im" + str(pcount) + "_linesmask.jpg", lines_mask)
-    
-    
     points_image = rotate_img.copy()
     
-    linesP = cv2.HoughLinesP(lines_mask, 1, np.pi/180, 50, None, 20, 20)
-    # linesP = cv2.HoughLines(lines_mask, 1, np.pi / 180, 150)
+    linesP = cv2.HoughLinesP(lines_mask, 1, np.pi/180, 50, None, 30, 30)
     
 
     if linesP is not None:    
@@ -311,8 +321,6 @@ def getKeyPoints(rotate_img, saveJpeg = False):
             l[0] -= LINE_OFFSET
             l[2] += LINE_OFFSET
             horizontalLines[i] = l
-            # points_image = cv2.line(points_image, (l[0], l[1]), (l[2], l[3]), (0, 0, 255), 2, cv2.LINE_AA)
-            # cv2.imwrite(RESULTS_DIR + table_file + str(count) + "_points.jpg", lineimg)
             count += 1
             
         for i in range(0, len(verticalLines)):
@@ -320,8 +328,6 @@ def getKeyPoints(rotate_img, saveJpeg = False):
             l[1] += LINE_OFFSET
             l[3] -= LINE_OFFSET
             verticalLines[i] = l
-            # points_image = cv2.line(points_image, (l[0], l[1]), (l[2], l[3]), (0, 0, 255), 2, cv2.LINE_AA)
-            # cv2.imwrite(RESULTS_DIR + table_file + str(count) + "_points.jpg", lineimg)
             count += 1
             
         keypoints = []
@@ -365,13 +371,19 @@ def getKeyPoints(rotate_img, saveJpeg = False):
         
         im_heigth, im_width = points_image.shape[:2]
         PIXEL_OFFSET = 20
-        x_left = max(0, min([point[0] for point in keypoints]) - PIXEL_OFFSET)
-        x_right = min(im_width - 1, max([point[0] for point in keypoints]) + PIXEL_OFFSET)
-        y_top = max(0, min([point[1] for point in keypoints]) - PIXEL_OFFSET)
-        y_bottom = min(im_heigth - 1, max([point[1] for point in keypoints]) + PIXEL_OFFSET)
 
-        # cv2.rectangle(points_image, (x_left, y_top),
-        #                         (x_right, y_bottom), (0, 255, 0), 5)
+        try:
+            x_left = max(0, min([point[0] for point in keypoints]) - PIXEL_OFFSET)
+            x_right = min(im_width - 1, max([point[0] for point in keypoints]) + PIXEL_OFFSET)
+            y_top = max(0, min([point[1] for point in keypoints]) - PIXEL_OFFSET)
+            y_bottom = min(im_heigth - 1, max([point[1] for point in keypoints]) + PIXEL_OFFSET)
+        except Exception as e:
+            if PRINT_DEBUG:
+                print("No keypoints")
+            x_left = 0
+            x_right = im_width - 1
+            y_top = 0
+            y_bottom = im_heigth - 1
 
         cropped_im = points_image[y_top:y_bottom, x_left:x_right]
 
@@ -383,80 +395,166 @@ def getKeyPoints(rotate_img, saveJpeg = False):
 
                     
         if saveJpeg:
-            cv2.imwrite(RESULTS_DIR + "im" + str(pcount) + "_points.jpg", cropped_im)
-        
+            if pattern:
+                cv2.imwrite(RESULTS_DIR + "pattern_" + FILENAME + "_points.jpg", cropped_im)
+            else:
+                cv2.imwrite(RESULTS_DIR + "image_" + FILENAME + "_points.jpg", cropped_im)
         return cropped_im, keypoints, x_left, y_top
+    else:
+        return None, None, None, None
 
 
-MIN_DIST = 35
-RESULTS_DIR = "results/"
-PATTERN_PATH = "patterns/"
+def cropToPattern(rotate_pattern, rotate_table):
+    cropped_table = rotate_table.copy()
+    offset = 0
+    if cropped_table.shape[0] > rotate_pattern.shape[0]:
+        offset = cropped_table.shape[0] - rotate_pattern.shape[0]
+        cropped_table = cropped_table[-rotate_pattern.shape[0]:,:,:]
+        
+    if cropped_table.shape[1] > rotate_pattern.shape[1]:
+        cropped_table = cropped_table[:,:rotate_pattern.shape[1],:]
+        
+    return cropped_table, offset
 
-pcount = 0
-createDir(RESULTS_DIR, '.jpg')
-
-def match_pattern(table_im):
-    global pcount
-    pcount += 1
+def initPatternDict(saveJpeg):
+    global pattern_dict
+    global FILENAME
 
     pattern_names = get_files(PATTERN_PATH, '.jpg')
 
-    # cv2.imwrite(RESULTS_DIR + "im" + str(pcount) + "_original.jpg", table_im)
-        
-    rotated_table_im, rotate_matrix = rotateIMG(table_im.copy())
-    cropped_rotated_table_im, keypoints_table, offset_x, offset_y = getKeyPoints(rotated_table_im)
-    
     for pattern_name in pattern_names:
+        FILENAME = pattern_name
         pattern_im = cv2.imread(PATTERN_PATH + pattern_name, cv2.IMREAD_COLOR)
         rotate_pattern, _ = rotateIMG(pattern_im)
-        rotate_pattern, keypoints_pattern, _, _ = getKeyPoints(rotate_pattern)
+        rotate_pattern, keypoints_pattern, _, _ = getKeyPoints(rotate_pattern, saveJpeg=saveJpeg, pattern=True)
 
-        border_points = []
-        with open(PATTERN_PATH + pattern_name[:-4] + '.csv') as csvfile:
-            reader = csv.DictReader(csvfile)
-            for row in reader:
-                border_points.append({'field_type': row['field_type'],
-                    'coords': [[row['x0'],row['y0']],[row['x1'],row['y1']]]})
+        pattern_dict[pattern_name] = {'image': rotate_pattern, 'keypoints': keypoints_pattern}
 
-        if keypoints_table is not None \
-            and abs(len(keypoints_pattern) - len(keypoints_table)) < len(keypoints_pattern) * 0.15:
 
-            borders = alignImages("img", keypoints_pattern.copy(), 
-                        keypoints_table.copy(), cropped_rotated_table_im.copy(), 
-                        rotate_matrix.copy(), border_points)
+MIN_DIST = 35
+MIN_DIST_BORDERS = 45
+PATTERN_MATCH_PERCENT = 0.8
+RESULTS_DIR = "results/"
+PATTERN_PATH = "patterns/"
+PRINT_DEBUG = False
+FILENAME = ""
+pattern_dict = {}
 
-            if borders is not None:
-                for index in range(len(borders)):
-                    border = borders[index]
-                    coords = border['coords']
-                    coords[0][0] += offset_x
-                    coords[0][1] += offset_y
-                    coords[1][0] += offset_x
-                    coords[1][1] += offset_y
-                    border['coords'] = coords
-                    borders[index] = border
+createDir(RESULTS_DIR, '.jpg')
+initPatternDict(saveJpeg=False)
 
-                return borders
+
+def match_pattern(table_im, filename, print_debug=False, saveJpeg=False):
+    global PRINT_DEBUG
+    global FILENAME
+    FILENAME = filename
+    PRINT_DEBUG = print_debug
+
+    if PRINT_DEBUG:
+        print("#############\n", FILENAME, "\n##############")
+
+    pattern_names = get_files(PATTERN_PATH, '.jpg')
+        
+    rotated_table_im, rotate_matrix = rotateIMG(table_im.copy())
+
+    cropped_rotated_table_im, keypoints_table, offset_x, offset_y = getKeyPoints(rotated_table_im.copy(), saveJpeg = saveJpeg)
+
+    if len(keypoints_table) < 10 or len(keypoints_table) > 90:
+        if PRINT_DEBUG:
+            print("Bad image, keypoints count:", len(keypoints_table))
+        return
+
+    for pattern_name in pattern_names:
+        if PRINT_DEBUG:
+            print("Pattern:", pattern_name)
+
+        rotate_pattern = pattern_dict[pattern_name]['image']
+        keypoints_pattern = pattern_dict[pattern_name]['keypoints']
+
+        y_diff = cropped_rotated_table_im.shape[0] - rotate_pattern.shape[0]
+        x_diff = cropped_rotated_table_im.shape[1] - rotate_pattern.shape[1]
+
+        if PRINT_DEBUG:
+            print("Pattern points:", len(keypoints_pattern), ", Table points:", len(keypoints_table))
+
+        FILENAME = filename
+        keypoints_pattern_bckp = keypoints_pattern.copy()
+        if keypoints_table is not None:
+            if 'small' in pattern_name:
+                if x_diff > 0 and y_diff > 200:
+                    for x_off in range(0, int(round(x_diff / 2)), 20):
+                        for y_off in range(0, int(round(y_diff / 2)), 20):   
+
+                            keypoints_pattern = keypoints_pattern_bckp.copy()
+
+                            for index in range(len(keypoints_pattern)):
+                                point = keypoints_pattern[index]
+                                point = (point[0] + (x_diff - x_off), point[1] + (y_diff - y_off))
+                                keypoints_pattern[index] = point
+
+                            border_points = []
+                            with open(PATTERN_PATH + pattern_name[:-4] + '.csv') as csvfile:
+                                reader = csv.DictReader(csvfile)
+                                for row in reader:
+                                    border_points.append({'field_type': row['field_type'],
+                                        'coords': [
+                                            [int(row['x0']) + (x_diff - x_off),
+                                             int(row['y0']) + (y_diff - y_off)],
+                                            [int(row['x1']) + (x_diff - x_off),
+                                             int(row['y1']) + (y_diff - y_off)]]
+                                    })
+
+                            borders = alignImages("img_" + FILENAME + "_" + pattern_name[:-4], keypoints_pattern.copy(), 
+                                        keypoints_table.copy(), cropped_rotated_table_im.copy(), 
+                                        rotate_matrix.copy(), border_points, saveJpeg = saveJpeg)
+
+                            if borders is not None:
+                                for index in range(len(borders)):
+                                    border = borders[index]
+                                    coords = border['coords']
+                                    coords[0][0] += offset_x
+                                    coords[0][1] += offset_y
+                                    coords[1][0] += offset_x
+                                    coords[1][1] += offset_y
+                                    border['coords'] = coords
+                                    borders[index] = border
+
+                                return borders
+                            else:
+                                if PRINT_DEBUG:
+                                    print("Incorrect pattern, next pattern")
             else:
-                print("Incorrect pattern, next pattern")
+                border_points = []
+                with open(PATTERN_PATH + pattern_name[:-4] + '.csv') as csvfile:
+                    reader = csv.DictReader(csvfile)
+                    for row in reader:
+                        border_points.append({'field_type': row['field_type'],
+                            'coords': [[row['x0'],row['y0']],[row['x1'],row['y1']]]})
+
+                borders = alignImages("img_" + FILENAME + "_" + pattern_name[:-4], keypoints_pattern.copy(), 
+                                    keypoints_table.copy(), cropped_rotated_table_im.copy(), 
+                                    rotate_matrix.copy(), border_points, saveJpeg = saveJpeg)
+
+                if borders is not None:
+                    for index in range(len(borders)):
+                        border = borders[index]
+                        coords = border['coords']
+                        coords[0][0] += offset_x
+                        coords[0][1] += offset_y
+                        coords[1][0] += offset_x
+                        coords[1][1] += offset_y
+                        border['coords'] = coords
+                        borders[index] = border
+
+                    return borders
+                else:
+                    if PRINT_DEBUG:
+                        print("Incorrect pattern, next pattern")
+
         else:
-            print("None regions, next pattern")
+            if PRINT_DEBUG:
+                print("None regions, next pattern")
 
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
-
-
-# In[ ]:
-
-
-
+    if PRINT_DEBUG:
+        print("No suitable pattern")
 

@@ -1,10 +1,5 @@
-# Ignore everything
-
 results/
-tables/
-.ipynb_checkpoints/patter_matcher-checkpoint.ipynb
+results/*
+
 .DS_Store
-results.zip
-*.jpg
-*.csv
-*.tiff
+
